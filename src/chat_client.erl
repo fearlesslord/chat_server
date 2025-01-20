@@ -1,79 +1,106 @@
-%%-----------------------------------------------------------------------------
-%% File: chat_client.erl
-%% Description: Simple Erlang-based client for our chat_server.
-%%-----------------------------------------------------------------------------
 -module(chat_client).
+-define(TCP_OPTIONS, [binary, {packet, 2}, {active, false}, {reuseaddr, true}]).
 
--export([start/0, start/2]).
+%% API
+-export([start/0, send/2, disconnect/1]).
+-export([run/2, recv_loop/1]).
 
-%%-----------------------------------------------------------------------------
-%% 1) start/0: starts client with default host/port
-%% 2) start/2: allows overriding host/port
-%%-----------------------------------------------------------------------------
-
--define(DEFAULT_HOST, "localhost").
--define(DEFAULT_PORT, 4040).
-
-%%--------------------------------------------------------------------
-%% Public API
-%%--------------------------------------------------------------------
-%% Starts the chat client connecting to DEFAULT_HOST:DEFAULT_PORT.
+%% Start the client
 start() ->
-    start(?DEFAULT_HOST, ?DEFAULT_PORT).
+    %% Prompt the user for a username
+    io:format("Enter your username: "),
+    Username = string:strip(io:get_line(""), right, $\n),
+    %% Connect to the chat server
+    {ok, Socket} = gen_tcp:connect("localhost", 8080, ?TCP_OPTIONS),
+    %% Join the chat
+    chat_client:send(Socket, {join, Username}),
+    io:format("~p joined the chat!~n", [Username]),
+    %% Start the message receive loop in a separate process (only one process per client)
+    spawn(chat_client, recv_loop, [Socket]),
+    run(Socket, Username).
 
-%% Starts the chat client with a specified Host and Port.
-start(Host, Port) ->
-    io:format("Connecting to server at ~s:~p ...~n", [Host, Port]),
-    case gen_tcp:connect(Host, Port, [binary, {active, false}]) of
-        {ok, Socket} ->
-            io:format("Connected. Type your messages below.~n", []),
-            client_loop(Socket);
-        {error, Reason} ->
-            io:format("Failed to connect: ~p~n", [Reason]),
-            {error, Reason}
-    end.
+%% Interactive message loop
+run(Socket, Username) ->
+    io:format("Available commands: /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, /exit~n"),
+    Input = string:strip(io:get_line(""), right, $\n),
+    case string:tokens(Input, " ") of
+        %% Exit the chat
+        ["/exit"] ->
+            disconnect(Socket);
 
-%%--------------------------------------------------------------------
-%% Internal Functions
-%%--------------------------------------------------------------------
+        %% Send a message
+        ["/msg" | Rest] ->
+            %% Log user input
+            Message = string:join(Rest, " "),
+            io:format("Sending to server: ~p~n", [{broadcast, Message}]),
+            chat_client:send(Socket, {broadcast, Message}),
+            run(Socket, Username);
 
-%% client_loop(Socket):
-%% 1. Receive data from server (non-blocking approach).
-%% 2. Prompt user for input.
-%% 3. Send to server.
-%% 4. Repeat until server closes or user quits.
-client_loop(Socket) ->
-    %% Step 1: Check for incoming data from server
-    receive_server_data(Socket),
+        %% Create a room
+        ["/create_room", RoomName] ->
+            chat_client:send(Socket, {create_room, RoomName}),
+            io:format("Requested to create room: ~p~n", [RoomName]),
+            run(Socket, Username);
 
-    %% Step 2: Prompt user in Erlang shell for next message
-    Input = io:get_line("You> "),
-    case Input of
-        eof ->
-            %% If user sends Ctrl+D (EOF), we exit
-            io:format("Goodbye~n", []),
-            gen_tcp:close(Socket),
-            ok;
+        %% Destroy a room
+        ["/destroy_room", RoomName] ->
+            chat_client:send(Socket, {destroy_room, RoomName}),
+            io:format("Requested to destroy room: ~p~n", [RoomName]),
+            run(Socket, Username);
+
+        %% List all rooms
+        ["/list_rooms"] ->
+            chat_client:send(Socket, {list_rooms}),
+            io:format("Requested to list all rooms.~n"),
+            run(Socket, Username);
+
+        %% Join a room
+        ["/join_room", RoomName] ->
+            chat_client:send(Socket, {join_room, RoomName}),
+            io:format("Requested to join room: ~p~n", [RoomName]),
+            run(Socket, Username);
+
+        %% Leave a room
+        ["/leave_room", RoomName] ->
+            chat_client:send(Socket, {leave_room, RoomName}),
+            io:format("Requested to leave room: ~p~n", [RoomName]),
+            run(Socket, Username);
+
+        %% Invalid command
         _ ->
-            %% Otherwise, we send the user’s text to the server
-            gen_tcp:send(Socket, list_to_binary(Input)),
-            %% Step 3: continue loop
-            client_loop(Socket)
+            io:format("Invalid command. Use /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, or /exit.~n"),
+            run(Socket, Username)
     end.
 
-%% receive_server_data(Socket):
-%% Try to read any data waiting on the socket. 
-%% We give a short timeout so the client_loop can keep prompting the user.
-receive_server_data(Socket) ->
-    case gen_tcp:recv(Socket, 0, 100) of
-        {ok, Data} ->
-            io:format("Server: ~s", [Data]);
-        {error, timeout} ->
-            %% No data arrived within 100ms, do nothing
-            ok;
+%% Dedicated message receive loop (runs in a single process)
+recv_loop(Socket) ->
+    case gen_tcp:recv(Socket, 0) of
+        {ok, Bin} ->
+            Message = binary_to_term(Bin),
+            %% Log received message
+            case Message of
+                String when is_list(String) ->
+                    io:format("~s~n", [String]);
+                _ ->
+                    io:format("~p~n", [Message])
+            end,
+            %% Continue receiving messages
+            recv_loop(Socket);
         {error, closed} ->
-            io:format("Server closed connection.~n", []),
-            gen_tcp:close(Socket),
-            %% Exit the client loop
-            erlang:exit(normal)
+            io:format("Connection closed by the server.~n"),
+            ok;
+        {error, Reason} ->
+            io:format("Error in connection: ~p~n", [Reason]),
+            ok
     end.
+
+%% Send a message
+send(Socket, Message) ->
+    Bin = term_to_binary(Message),
+    gen_tcp:send(Socket, Bin).
+
+%% Disconnect from the chat
+disconnect(Socket) ->
+    io:format("Disconnecting...~n"),
+    gen_tcp:close(Socket),
+    halt().

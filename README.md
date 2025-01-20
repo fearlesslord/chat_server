@@ -20,9 +20,9 @@
    rebar3 compile
 ```
 ### 2. **Start the Chat Server**
- Enter a rebar3 shell
+ Enter in rebar3 shell with command "rebar3 shell" and then
 ```bash
-   rebar3 shell --config config/server.config
+   chat_server:start().
 ```
 ## 3. **Start the Chat Client**
 ### Open a new terminal (leave the server running in the first one).
@@ -33,6 +33,69 @@
 ```bash 
    chat_client:start().
 ```
+## List of commands:
+- ### Create a Room
+Command: 
+```bash  
+/create_room <room_name> 
+```
+
+Example:
+```bash
+ /create_room room1 
+ ```
+
+- ###  Destroy a Room
+Command: 
+```bash  
+/destroy_room <room_name>
+```
+
+Example:
+```bash
+ /destroy_room room1
+ ```
+
+
+- ### List All Rooms
+Command: 
+```bash  
+/list_rooms
+```
+
+- ### Join a Room
+Command: 
+```bash  
+/join_room <room_name>
+```
+
+Example:
+```bash
+ /join_room room1
+ ```
+
+- ### Leave a Room
+Command: 
+```bash  
+/leave_room <room_name>
+```
+
+Example:
+```bash
+ /leave_room room1
+ ```
+
+- ###  Send a message to all users that have joiner to room
+First you need to join to room and then send a message with command: 
+```bash  
+/msg <message>
+```
+
+Example:
+```bash
+ /msg Hello, everyone!
+ ```
+
 
 ## 4. Test Multiple TCP Connections
 ### To test multiple concurrent chat clients, simply open additional terminals and repeat Step 3. Each new shell can run the client

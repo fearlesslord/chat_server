@@ -1,20 +1,29 @@
-%% File: src/chat_server_sup.erl
 -module(chat_server_sup).
 -behaviour(supervisor).
 
--export([start_link/0]).
--export([init/1]).
+%% API
+-export([start_link/0, init/1]).
+-export([start_child/0]).
 
+%% Start the supervisor
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+%% Initialize the supervisor
 init([]) ->
-    ServerChild = {
-        chat_server_proc,
-        {chat_server, start_link, []},
+    {ok, {
+        {one_for_one, 5, 10},
+        [] %% No children started by default
+    }}.
+
+%% Public API to start the chat server dynamically
+start_child() ->
+    ChildSpec = {
+        chat_server,
+        {chat_server, start, []},
         permanent,
         5000,
         worker,
         [chat_server]
     },
-    {ok, {{one_for_one, 0, 1}, [ServerChild]}}.
+    supervisor:start_child(?MODULE, ChildSpec).

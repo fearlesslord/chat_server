@@ -1,120 +1,150 @@
-%%-----------------------------------------------------------------------------
-%% File: chat_server.erl
-%% Description: An Erlang/OTP server accepting multiple TCP connections.
-%%-----------------------------------------------------------------------------
 -module(chat_server).
--behaviour(gen_server).
 
-%% External API
--export([start_link/0, stop/0]).
+%% API functions
+-export([start/0, start/1, stop/1]).
 
-%% gen_server Callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+%% Start the server
+start() -> start(8080).
+start(Port) ->
+    io:format("Starting up chat server...~n"),
+    %% Create a dictionary to hold all connections (usernames and sockets)
+    ClientDict = dict:new(),
+    %% Create a dictionary to hold room data
+    RoomDict = dict:new(),
+    %% Spawn a dictionary handler for inserts and lookups
+    DictPid = spawn_link(fun() -> dict_handler(ClientDict, RoomDict) end),
+    %% Hand over handling of listeners to listener module
+    chat_listener:listen(Port, DictPid).
 
--define(DEFAULT_PORT, 4040).
+%% Dictionary handler for managing clients and rooms
+dict_handler(ClientDict, RoomDict) ->
+    receive
+        %% Add a new client
+		{add_new_client, Socket, Username} ->
+			io:format("Adding user ~p~n", [Username]),
+			NewClientDict = dict:store(Socket, #{username => Username, room => undefined}, ClientDict),
+			dict_handler(NewClientDict, RoomDict);
 
-%%=============================================================================
-%% Public API
-%%=============================================================================
-%% Starts the gen_server under a registered name (chat_server).
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+        %% Get the socket for a username
+        {get_client_socket, ReceiverPid, Username} ->
+            case dict:find(Username, ClientDict) of
+                {ok, Socket} ->
+                    ReceiverPid ! {ok, Socket};
+                error ->
+                    ReceiverPid ! {error, "Client not found"}
+            end,
+            dict_handler(ClientDict, RoomDict);
 
-%% Ask the gen_server to stop.
-stop() ->
-    gen_server:call(?MODULE, stop).
+        %% List all clients
+        {get_all_clients, ReceiverPid} ->
+            ClientNames = dict:fetch_keys(ClientDict),
+            ReceiverPid ! {ok, ClientNames},
+            dict_handler(ClientDict, RoomDict);
 
-%%=============================================================================
-%% gen_server callbacks
-%%=============================================================================
-init([]) ->
-    %% Open a listening socket on DEFAULT_PORT
-    {ok, ListenSocket} = gen_tcp:listen(?DEFAULT_PORT, [
-        binary,
-        {packet, 0},
-        {reuseaddr, true},
-        {active, false}
-    ]),
-    io:format("~p listening on port ~p~n", [?MODULE, ?DEFAULT_PORT]),
+        %% Add a new room
+		{create_room, RoomName, CreatorPid, CreatorSocket} ->
+			case dict:is_key(RoomName, RoomDict) of
+				true ->
+					CreatorPid ! {error, "Room already exists"},
+					dict_handler(ClientDict, RoomDict);
+				false ->
+					NewRoomDict = dict:store(RoomName, #{creator => CreatorSocket, members => lists:usort([CreatorSocket])}, RoomDict),
+					CreatorPid ! {ok, "Room created"},
+					dict_handler(ClientDict, NewRoomDict)
+			end;
 
-    %% Trigger the first accept in handle_info/2 by sending 'accept'
-    self() ! accept,
+        %% Destroy a room (only the creator can destroy it)
+        {destroy_room, RoomName, RequestorPid, RequestorSocket} ->
+            case dict:find(RoomName, RoomDict) of
+                {ok, Room} ->
+                    case maps:get(creator, Room) of
+                        RequestorSocket ->
+                            NewRoomDict = dict:erase(RoomName, RoomDict),
+                            RequestorPid ! {ok, "Room destroyed"},
+                            dict_handler(ClientDict, NewRoomDict);
+                        _ ->
+                            RequestorPid ! {error, "Only the creator can destroy the room"},
+                            dict_handler(ClientDict, RoomDict)
+                    end;
+                error ->
+                    RequestorPid ! {error, "Room does not exist"},
+                    dict_handler(ClientDict, RoomDict)
+            end;
 
-    %% Return the ListenSocket as the gen_server's state
-    {ok, ListenSocket}.
+        %% List all rooms
+        {list_rooms, RequestorPid} ->
+            RoomNames = dict:fetch_keys(RoomDict),
+            RequestorPid ! {ok, RoomNames},
+            dict_handler(ClientDict, RoomDict);
 
-handle_call(stop, _From, ListenSocket) ->
-    %% On 'stop' call, terminate the server gracefully
-    {stop, normal, ok, ListenSocket};
+        %% Join an existing room
+		{join_room, RoomName, RequestorPid, RequestorSocket} ->
+			case dict:find(RoomName, RoomDict) of
+				{ok, Room} ->
+					Members = maps:get(members, Room),
+					UpdatedRoom = maps:put(members, [RequestorSocket | Members], Room),
+					NewRoomDict = dict:store(RoomName, UpdatedRoom, RoomDict),
+					%% Update the client's room in ClientDict
+					ClientInfo = dict:fetch(RequestorSocket, ClientDict),
+					UpdatedClientInfo = maps:put(room, RoomName, ClientInfo),
+					UpdatedClientDict = dict:store(RequestorSocket, UpdatedClientInfo, ClientDict),
+					RequestorPid ! {ok, "Joined room"},
+					dict_handler(UpdatedClientDict, NewRoomDict);
+				error ->
+					RequestorPid ! {error, "Room does not exist"},
+					dict_handler(ClientDict, RoomDict)
+			end;
 
-handle_call(_Request, _From, State) ->
-    {reply, ok, State}.
+        %% Leave a room
+        {leave_room, RoomName, RequestorPid, RequestorSocket} ->
+            case dict:find(RoomName, RoomDict) of
+                {ok, Room} ->
+                    Members = maps:get(members, Room),
+                    UpdatedRoom = maps:put(members, lists:delete(RequestorSocket, Members), Room),
+                    NewRoomDict = dict:store(RoomName, UpdatedRoom, RoomDict),
+                    RequestorPid ! {ok, "Left room"},
+                    dict_handler(ClientDict, NewRoomDict);
+                error ->
+                    RequestorPid ! {error, "Room does not exist"},
+                    dict_handler(ClientDict, RoomDict)
+            end;
 
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+		%% Broadcast a message to all users in the room
+		{broadcast_to_room, SenderSocket, Message} ->
+			case dict:find(SenderSocket, ClientDict) of
+				{ok, #{room := RoomName, username := Username}} when RoomName =/= undefined ->
+					case dict:find(RoomName, RoomDict) of
+						{ok, Room} ->
+							Members = maps:get(members, Room),
+							%% Ensure each socket gets the message only once
+							UniqueMembers = lists:usort(Members),
+							FormattedMessage = io_lib:format("[~s] ~s: ~s", [RoomName, Username, Message]),
+							lists:foreach(fun(MemberSocket) ->
+								gen_tcp:send(MemberSocket, term_to_binary(lists:flatten(FormattedMessage)))
+							end, UniqueMembers),
+							dict_handler(ClientDict, RoomDict);
+						error ->
+							gen_tcp:send(SenderSocket, term_to_binary({error, "Room does not exist"})),
+							dict_handler(ClientDict, RoomDict)
+					end;
+				_ ->
+					gen_tcp:send(SenderSocket, term_to_binary({error, "You are not in a room"})),
+					dict_handler(ClientDict, RoomDict)
+			end;
 
-handle_info(accept, ListenSocket) ->
-    %% Accept a new client; on success, spawn a dedicated handler
-    case gen_tcp:accept(ListenSocket) of
-        {ok, ClientSocket} ->
-            spawn(fun() -> handle_client(ClientSocket) end),
-            %% Trigger another accept for the next client
-            self() ! accept;
-        {error, Reason} ->
-            io:format("~p accept error: ~p~n", [?MODULE, Reason])
-    end,
-    {noreply, ListenSocket};
+        %% Stop the server
+        stop ->
+            io:format("Stopping server...~n"),
+            halt();
 
-handle_info(_Info, State) ->
-    %% Ignore any other messages
-    {noreply, State}.
-
-terminate(_Reason, ListenSocket) ->
-    io:format("~p shutting down~n", [?MODULE]),
-    gen_tcp:close(ListenSocket),
-    ok.
-
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
-
-%%=============================================================================
-%% Client Handling (runs outside gen_server in separate spawned processes)
-%%=============================================================================
-handle_client(Socket) ->
-    gen_tcp:send(Socket, <<"Enter your name: ">>),
-    case gen_tcp:recv(Socket, 0) of
-        {ok, NameBin} ->
-            Name = fix_line_breaks(NameBin),
-            io:format("User ~s connected~n", [Name]),
-            chat_loop(Socket, Name);
-        {error, closed} ->
-            io:format("Client socket closed unexpectedly~n", [])
+        %% Handle unexpected messages
+        _ ->
+            io:format("Unknown message received.~n"),
+            dict_handler(ClientDict, RoomDict)
     end.
 
-chat_loop(Socket, Name) ->
-    WelcomeMsg = io_lib:format("Welcome, ~s! Type your messages below.~n", [Name]),
-    gen_tcp:send(Socket, list_to_binary(WelcomeMsg)),
-    receive_messages(Socket, Name).
+%% Stop the server
+stop(Socket) ->
+    io:format("Shutting down server on socket ~p~n", [Socket]),
+    gen_tcp:close(Socket).
 
-receive_messages(Socket, Name) ->
-    case gen_tcp:recv(Socket, 0) of
-        {ok, Data} ->
-            Msg = fix_line_breaks(Data),
-            io:format("[~s] says: ~s~n", [Name, Msg]),
-
-            %% Echo message back (optional):
-            Echo = io_lib:format("You said: ~s~n", [Msg]),
-            gen_tcp:send(Socket, list_to_binary(Echo)),
-
-            %% Continue receiving more messages
-            receive_messages(Socket, Name);
-
-        {error, closed} ->
-            io:format("User ~s disconnected~n", [Name]),
-            ok
-    end.
-
-%% Utility: remove trailing \r or \n
-fix_line_breaks(Data) ->
-    string:trim(binary_to_list(Data)).

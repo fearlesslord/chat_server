@@ -1,28 +1,10 @@
-%% File: src/chat_server.app.src
 {application, chat_server,
  [
-  {description, "An OTP application"},
+  {description, "Erlang Chat Server"},
   {vsn, "0.1.0"},
+  {modules, [chat_server_app, chat_server, chat_listener, chat_client, chat_server_sup]},
   {registered, []},
-  {mod, {chat_server_app, []}},
-  {applications, [
-      kernel,
-      stdlib
-  ]},
-
-  %% Default is "client mode": start_server = false
-  {env, [
-      {start_server, false}
-  ]},
-
-  %% List all your modules
-  {modules, [
-      chat_client,
-      chat_server,
-      chat_server_app,
-      chat_server_sup
-  ]},
-
-  {licenses, ["Apache 2.0"]},
-  {links, []}
+  {applications, [kernel, stdlib, sasl]},
+  {mod, {chat_server_app, []}}, %% Specify application module
+  {env, []}
  ]}.
