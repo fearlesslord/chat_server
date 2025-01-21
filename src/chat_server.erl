@@ -132,6 +132,25 @@ dict_handler(ClientDict, RoomDict) ->
 					dict_handler(ClientDict, RoomDict)
 			end;
 
+        %% Send a private message to a specific user
+        {send_private_message, SenderSocket, RecipientUsername, Message} ->
+            case find_socket_by_username(RecipientUsername, ClientDict) of
+                {ok, RecipientSocket} ->
+                    SenderInfo = dict:fetch(SenderSocket, ClientDict),
+                    SenderUsername = maps:get(username, SenderInfo),
+                    FormattedMessage = io_lib:format("[Private] ~s -> ~s: ~s", [SenderUsername, RecipientUsername, Message]),
+                    %% Send message to the recipient
+                    gen_tcp:send(RecipientSocket, term_to_binary(lists:flatten(FormattedMessage))),
+                    %% Confirm message was sent to the sender
+                    gen_tcp:send(SenderSocket, term_to_binary({ok, "Private message sent"})),
+                    dict_handler(ClientDict, RoomDict);
+                error ->
+                    %% Improved error handling
+                    ErrorMessage = io_lib:format("Error: User ~s not found. Please check the username or ensure they are online.", [RecipientUsername]),
+                    gen_tcp:send(SenderSocket, term_to_binary(lists:flatten(ErrorMessage))),
+                    dict_handler(ClientDict, RoomDict)
+            end;
+
         %% Stop the server
         stop ->
             io:format("Stopping server...~n"),
@@ -148,3 +167,15 @@ stop(Socket) ->
     io:format("Shutting down server on socket ~p~n", [Socket]),
     gen_tcp:close(Socket).
 
+%% Find the socket associated with a username
+find_socket_by_username(Username, ClientDict) ->
+    dict:fold(
+        fun(Socket, #{username := U}, Acc) ->
+            case U =:= Username of
+                true -> {ok, Socket};
+                false -> Acc
+            end
+        end,
+        error,
+        ClientDict
+    ).

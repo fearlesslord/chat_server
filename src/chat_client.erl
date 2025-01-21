@@ -21,9 +21,15 @@ start() ->
 
 %% Interactive message loop
 run(Socket, Username) ->
-    io:format("Available commands: /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, /exit~n"),
+    io:format("Available commands: /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, /private_msg, /exit~n"),
     Input = string:strip(io:get_line(""), right, $\n),
     case string:tokens(Input, " ") of
+        %% Private message to another user
+        ["/private_msg", RecipientUsername | Rest] ->
+            Message = string:join(Rest, " "),
+            io:format("Sending private message to ~p: ~p~n", [RecipientUsername, Message]),
+            chat_client:send(Socket, {send_to, RecipientUsername, Message}),
+            run(Socket, Username);
         %% Exit the chat
         ["/exit"] ->
             disconnect(Socket);
@@ -68,7 +74,7 @@ run(Socket, Username) ->
 
         %% Invalid command
         _ ->
-            io:format("Invalid command. Use /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, or /exit.~n"),
+            io:format("Invalid command. Use /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, /private_msg or /exit.~n"),
             run(Socket, Username)
     end.
 
@@ -77,7 +83,6 @@ recv_loop(Socket) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, Bin} ->
             Message = binary_to_term(Bin),
-            %% Log received message
             case Message of
                 String when is_list(String) ->
                     io:format("~s~n", [String]);

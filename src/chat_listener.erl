@@ -109,6 +109,16 @@ process_data(Socket, Data, DictPid) ->
 			DictPid ! {broadcast_to_room, Socket, Message},
 			send_message(Socket, {ok, "Message broadcasted to your room"});
 
+        %% Send a private message to a specific user
+        {send_to, RecipientUsername, Message} ->
+            DictPid ! {send_private_message, Socket, RecipientUsername, Message},
+            receive
+                {ok, Response} ->
+                    send_message(Socket, {ok, Response});
+                {error, Reason} ->
+                    send_message(Socket, {error, Reason})
+            end;
+
         %% Invalid command
         _ ->
             send_message(Socket, {error, "Invalid command"})

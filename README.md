@@ -33,6 +33,8 @@
 ```bash 
    chat_client:start().
 ```
+Then enter your username
+
 ## List of commands:
 - ### Create a Room
 Command: 
@@ -96,6 +98,50 @@ Example:
  /msg Hello, everyone!
  ```
 
+ - ###  Send a Private Message
+```bash  
+/private_msg <username> <message>
+```
 
+Example:
+```bash
+ /private_msg username2 Hi, how are you?
+ ```
+
+## How to test private messaging:
+
+### 1. Start the Server:
+```bash
+chat_server:start().
+```
+
+### 2. Start Two Clients 
+```bash
+chat_client:start().
+```
+Enter username: user1
+
+- Start the second client:
+```bash
+chat_client:start().
+```
+Enter username: user2.
+
+### 3. Send a Private Message:
+- From user1, send a private message to user2
+```bash
+/private_msg user2 hi
+```
+
+Expected output on user2
+```bash
+[Private] user1 -> user2: hi
+```
+
+If you send a private message to a non-existent user you will receive:
+```bash
+Error: User user2 not found. Please check the username or ensure they are online.
+```
+__________________________________________
 ## 4. Test Multiple TCP Connections
 ### To test multiple concurrent chat clients, simply open additional terminals and repeat Step 3. Each new shell can run the client
