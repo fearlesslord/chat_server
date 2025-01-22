@@ -83,7 +83,7 @@ process_data(Socket, Data, DictPid) ->
 
         %% List all rooms
         {list_rooms} ->
-            DictPid ! {list_rooms, self()},
+            DictPid ! {list_rooms, self(), Socket},
             receive
                 {ok, RoomNames} -> send_message(Socket, {ok, RoomNames})
             end;
@@ -117,6 +117,33 @@ process_data(Socket, Data, DictPid) ->
                     send_message(Socket, {ok, Response});
                 {error, Reason} ->
                     send_message(Socket, {error, Reason})
+            end;
+
+        %% Create a private room
+        {create_private_room, RoomName} ->
+            DictPid ! {create_private_room, RoomName, self(), Socket},
+            receive
+                {ok, Response} -> send_message(Socket, {ok, Response});
+                {error, Reason} -> send_message(Socket, {error, Reason})
+            end;
+
+        %% Invite a user to a private room
+        {invite_to_private_room, RoomName, Username} ->
+            % please print this out to the console
+            io:format("Inviting ~p to room ~p~n", [Username, RoomName]),
+
+            DictPid ! {invite_to_private_room, RoomName, Socket, Username, self()},
+            receive
+                {ok, Response} -> send_message(Socket, {ok, Response});
+                {error, Reason} -> send_message(Socket, {error, Reason})
+            end;
+
+        %% Join a private room
+        {join_private_room, RoomName} ->
+            DictPid ! {join_private_room, RoomName, self(), Socket},
+            receive
+                {ok, Response} -> send_message(Socket, {ok, Response});
+                {error, Reason} -> send_message(Socket, {error, Reason})
             end;
 
         %% Invalid command

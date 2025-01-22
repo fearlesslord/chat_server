@@ -142,6 +142,34 @@ If you send a private message to a non-existent user you will receive:
 ```bash
 Error: User user2 not found. Please check the username or ensure they are online.
 ```
-__________________________________________
+_________________________________________
+
+- ### Create a private room.
+```bash  
+/create_private_room <room_name> 
+```
+Example:
+```bash  
+/create_private_room private_room
+```
+
+- ### Invite a user to a private room.
+```bash  
+/invite_to_private_room <room_name> <username> - Invite a user to a private room.
+```
+Example:
+```bash  
+/invite_to_private_room private_room user2
+```
+
+- ### Join a private room (if invited).
+```bash  
+/join_private_room <room_name>      - Join a private room (if invited).
+```  
+Example:
+```bash  
+/join_private_room private_room
+```
+
 ## 4. Test Multiple TCP Connections
 ### To test multiple concurrent chat clients, simply open additional terminals and repeat Step 3. Each new shell can run the client

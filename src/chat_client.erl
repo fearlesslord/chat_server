@@ -15,68 +15,78 @@ start() ->
     %% Join the chat
     chat_client:send(Socket, {join, Username}),
     io:format("~p joined the chat!~n", [Username]),
-    %% Start the message receive loop in a separate process (only one process per client)
+    %% Display the available commands
+    display_commands(),
+    %% Start the message receive loop in a separate process
     spawn(chat_client, recv_loop, [Socket]),
+    %% Enter the main input loop
     run(Socket, Username).
 
 %% Interactive message loop
 run(Socket, Username) ->
-    io:format("Available commands: /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, /private_msg, /exit~n"),
     Input = string:strip(io:get_line(""), right, $\n),
     case string:tokens(Input, " ") of
-        %% Private message to another user
         ["/private_msg", RecipientUsername | Rest] ->
             Message = string:join(Rest, " "),
             io:format("Sending private message to ~p: ~p~n", [RecipientUsername, Message]),
             chat_client:send(Socket, {send_to, RecipientUsername, Message}),
             run(Socket, Username);
-        %% Exit the chat
+
         ["/exit"] ->
             disconnect(Socket);
 
-        %% Send a message
         ["/msg" | Rest] ->
-            %% Log user input
             Message = string:join(Rest, " "),
-            io:format("Sending to server: ~p~n", [{broadcast, Message}]),
+            io:format("Sending message to the room: ~p~n", [Message]),
             chat_client:send(Socket, {broadcast, Message}),
             run(Socket, Username);
 
-        %% Create a room
         ["/create_room", RoomName] ->
-            chat_client:send(Socket, {create_room, RoomName}),
             io:format("Requested to create room: ~p~n", [RoomName]),
+            chat_client:send(Socket, {create_room, RoomName}),
             run(Socket, Username);
 
-        %% Destroy a room
+        ["/create_private_room", RoomName] ->
+            io:format("Requested to create private room: ~p~n", [RoomName]),
+            chat_client:send(Socket, {create_private_room, RoomName}),
+            run(Socket, Username);
+
+        ["/invite_to_private_room", RoomName, InviteeUsername] ->
+            io:format("Inviting ~p to private room ~p~n", [InviteeUsername, RoomName]),
+            chat_client:send(Socket, {invite_to_private_room, RoomName, InviteeUsername}),
+            run(Socket, Username);
+
         ["/destroy_room", RoomName] ->
-            chat_client:send(Socket, {destroy_room, RoomName}),
             io:format("Requested to destroy room: ~p~n", [RoomName]),
+            chat_client:send(Socket, {destroy_room, RoomName}),
             run(Socket, Username);
 
-        %% List all rooms
         ["/list_rooms"] ->
-            chat_client:send(Socket, {list_rooms}),
             io:format("Requested to list all rooms.~n"),
+            chat_client:send(Socket, {list_rooms}),
             run(Socket, Username);
 
-        %% Join a room
         ["/join_room", RoomName] ->
-            chat_client:send(Socket, {join_room, RoomName}),
             io:format("Requested to join room: ~p~n", [RoomName]),
+            chat_client:send(Socket, {join_room, RoomName}),
             run(Socket, Username);
 
-        %% Leave a room
+        ["/join_private_room", RoomName] ->
+            io:format("Requested to join private room: ~p~n", [RoomName]),
+            chat_client:send(Socket, {join_private_room, RoomName}),
+            run(Socket, Username);
+
         ["/leave_room", RoomName] ->
-            chat_client:send(Socket, {leave_room, RoomName}),
             io:format("Requested to leave room: ~p~n", [RoomName]),
+            chat_client:send(Socket, {leave_room, RoomName}),
             run(Socket, Username);
 
-        %% Invalid command
         _ ->
-            io:format("Invalid command. Use /msg, /create_room, /destroy_room, /list_rooms, /join_room, /leave_room, /private_msg or /exit.~n"),
+            io:format("Invalid command. Use the commands listed below.~n"),
+            display_commands(),
             run(Socket, Username)
     end.
+
 
 %% Dedicated message receive loop (runs in a single process)
 recv_loop(Socket) ->
@@ -109,3 +119,19 @@ disconnect(Socket) ->
     io:format("Disconnecting...~n"),
     gen_tcp:close(Socket),
     halt().
+
+%% Display the available commands
+display_commands() ->
+    io:format("Available commands:\n"),
+    io:format("  /msg <message>                      - Send a message to the current room.\n"),
+    io:format("  /create_room <room_name>            - Create a public room.\n"),
+    io:format("  /create_private_room <room_name>    - Create a private room.\n"),
+    io:format("  /invite_to_private_room <room_name> <username> - Invite a user to a private room.\n"),
+    io:format("  /destroy_room <room_name>           - Destroy a room you created.\n"),
+    io:format("  /list_rooms                         - List all visible rooms.\n"),
+    io:format("  /join_room <room_name>              - Join a public room.\n"),
+    io:format("  /join_private_room <room_name>      - Join a private room (if invited).\n"),
+    io:format("  /leave_room <room_name>             - Leave the current room.\n"),
+    io:format("  /private_msg <username> <message>   - Send a private message to a user.\n"),
+    io:format("  /exit                               - Exit the chat application.\n\n").
+

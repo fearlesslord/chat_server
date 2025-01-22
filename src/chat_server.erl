@@ -72,9 +72,29 @@ dict_handler(ClientDict, RoomDict) ->
             end;
 
         %% List all rooms
-        {list_rooms, RequestorPid} ->
-            RoomNames = dict:fetch_keys(RoomDict),
-            RequestorPid ! {ok, RoomNames},
+        {list_rooms, RequestorPid, RequestorSocket} ->
+            %% Filter rooms visible to the requesting user
+            VisibleRooms = dict:fold(
+                fun(RoomName, Room, Acc) ->
+                    case maps:get(private, Room, false) of
+                        true ->
+                            %% Check if the user is invited or a member
+                            InvitedOrMember = 
+                                lists:member(RequestorSocket, maps:get(members, Room)) orelse
+                                lists:member(maps:get(username, dict:fetch(RequestorSocket, ClientDict)), maps:get(invites, Room)),
+                            case InvitedOrMember of
+                                true -> [RoomName | Acc];
+                                false -> Acc
+                            end;
+                        false ->
+                            %% Public room, always visible
+                            [RoomName | Acc]
+                    end
+                end,
+                [],
+                RoomDict
+            ),
+            RequestorPid ! {ok, lists:reverse(VisibleRooms)},
             dict_handler(ClientDict, RoomDict);
 
         %% Join an existing room
@@ -150,6 +170,75 @@ dict_handler(ClientDict, RoomDict) ->
                     gen_tcp:send(SenderSocket, term_to_binary(lists:flatten(ErrorMessage))),
                     dict_handler(ClientDict, RoomDict)
             end;
+
+        %% Add a new private room
+        {create_private_room, RoomName, CreatorPid, CreatorSocket} ->
+            case dict:is_key(RoomName, RoomDict) of
+                true ->
+                    CreatorPid ! {error, "Room already exists"},
+                    dict_handler(ClientDict, RoomDict);
+                false ->
+                    %% Initialize the room with invites as an empty list
+                    NewRoomDict = dict:store(RoomName, #{creator => CreatorSocket, members => [CreatorSocket], invites => [], private => true}, RoomDict),
+                    CreatorPid ! {ok, "Private room created"},
+                    dict_handler(ClientDict, NewRoomDict)
+            end;
+
+        %% Invite a user to a private room
+        {invite_to_private_room, RoomName, InviterSocket, InviteeUsername, InviterPid} ->
+            case dict:find(RoomName, RoomDict) of
+                {ok, Room} ->
+                    case maps:get(creator, Room) =:= InviterSocket of
+                        true ->
+                            %% Fetch and update the invites list
+                            Invites = maps:get(invites, Room, []), %% Default to an empty list
+                            case lists:member(InviteeUsername, Invites) of
+                                true ->
+                                    InviterPid ! {ok, "User already invited"},
+                                    dict_handler(ClientDict, RoomDict);
+                                false ->
+                                    UpdatedRoom = maps:put(invites, [InviteeUsername | Invites], Room),
+                                    NewRoomDict = dict:store(RoomName, UpdatedRoom, RoomDict),
+                                    InviterPid ! {ok, "User invited"},
+                                    dict_handler(ClientDict, NewRoomDict)
+                            end;
+                        false ->
+                            InviterPid ! {error, "Only the creator can invite users"},
+                            dict_handler(ClientDict, RoomDict)
+                    end;
+                error ->
+                    InviterPid ! {error, "Room does not exist"},
+                    dict_handler(ClientDict, RoomDict)
+            end;
+        %% Join a private room (requires invitation)
+    {join_private_room, RoomName, RequestorPid, RequestorSocket} ->
+        case dict:find(RoomName, RoomDict) of
+            {ok, Room} ->
+                Invites = maps:get(invites, Room, []), %% Default to empty list
+                RequestorInfo = dict:fetch(RequestorSocket, ClientDict),
+                RequestorUsername = maps:get(username, RequestorInfo),
+                case lists:member(RequestorUsername, Invites) of
+                    true ->
+                        %% Add user to members and remove from invites
+                        UpdatedRoom = maps:put(members,[RequestorSocket | maps:get(members, Room)],
+                            maps:put(
+                                invites,
+                                lists:delete(RequestorUsername, Invites),
+                                Room
+                            )
+                        ),
+                        NewRoomDict = dict:store(RoomName, UpdatedRoom, RoomDict),
+                        RequestorPid ! {ok, "Joined private room"},
+                        dict_handler(ClientDict, NewRoomDict);
+                    false ->
+                        RequestorPid ! {error, "You are not invited to this room"},
+                        dict_handler(ClientDict, RoomDict)
+                end;
+            error ->
+                RequestorPid ! {error, "Room does not exist"},
+                dict_handler(ClientDict, RoomDict)
+        end;
+    
 
         %% Stop the server
         stop ->
