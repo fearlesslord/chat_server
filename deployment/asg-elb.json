@@ -1,27 +1,22 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Template to create an Auto Scaling Group with an Elastic Load Balancer for Chat Server",
   "Resources": {
-    "ChatServerInstance": {
-      "Type": "AWS::EC2::Instance",
+    "ChatServerLaunchConfiguration": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
       "Properties": {
+        "ImageId": "ami-0c02fb55956c7d316",
         "InstanceType": "t2.micro",
         "KeyName": "erl_server_ec2",
-        "ImageId": "ami-0c02fb55956c7d316",
-        "SecurityGroupIds": [
+        "SecurityGroups": [
           { "Ref": "ChatServerSecurityGroup" }
-        ],
-        "Tags": [
-          {
-            "Key": "Name",
-            "Value": "ChatServer"
-          }
         ]
       }
     },
     "ChatServerSecurityGroup": {
       "Type": "AWS::EC2::SecurityGroup",
       "Properties": {
-        "GroupDescription": "Allow SSH and Chat Server access",
+        "GroupDescription": "Allow traffic for ELB and Chat Server",
         "SecurityGroupIngress": [
           {
             "IpProtocol": "tcp",
@@ -34,28 +29,119 @@
             "FromPort": 8080,
             "ToPort": 8080,
             "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
           }
+        ]
+      }
+    },
+    "ChatServerLoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "Listeners": [
+          {
+            "LoadBalancerPort": "80",
+            "InstancePort": "8080",
+            "Protocol": "HTTP"
+          }
+        ],
+        "HealthCheck": {
+          "Target": "HTTP:8080/",
+          "HealthyThreshold": "3",
+          "UnhealthyThreshold": "2",
+          "Interval": "30",
+          "Timeout": "5"
+        },
+        "SecurityGroups": [
+          { "Ref": "ChatServerSecurityGroup" }
+        ],
+        "Subnets": [
+          { "Ref": "PublicSubnet" }
         ],
         "Tags": [
           {
             "Key": "Name",
-            "Value": "ChatServerSG"
+            "Value": "ChatServerELB"
+          }
+        ]
+      }
+    },
+    "ChatServerAutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "LaunchConfigurationName": { "Ref": "ChatServerLaunchConfiguration" },
+        "MinSize": "1",
+        "MaxSize": "3",
+        "DesiredCapacity": "1",
+        "VPCZoneIdentifier": [
+          { "Ref": "PublicSubnet" }
+        ],
+        "TargetGroupARNs": [
+          { "Ref": "ChatServerTargetGroup" }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "ChatServerInstance",
+            "PropagateAtLaunch": "true"
+          }
+        ]
+      }
+    },
+    "ChatServerTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "HealthCheckIntervalSeconds": 30,
+        "HealthCheckPath": "/",
+        "HealthCheckPort": "8080",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 3,
+        "UnhealthyThresholdCount": 2,
+        "Port": 8080,
+        "Protocol": "HTTP",
+        "VpcId": { "Ref": "VPC" },
+        "TargetType": "instance"
+      }
+    },
+    "PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "CidrBlock": "10.0.1.0/24",
+        "MapPublicIpOnLaunch": true
+      }
+    },
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "ChatServerVPC"
           }
         ]
       }
     }
   },
   "Outputs": {
-    "InstanceId": {
-      "Description": "ID of the created EC2 instance",
-      "Value": { "Ref": "ChatServerInstance" }
+    "LoadBalancerDNS": {
+      "Description": "DNS name of the Load Balancer",
+      "Value": { "Fn::GetAtt": ["ChatServerLoadBalancer", "DNSName"] }
     },
-    "PublicIP": {
-      "Description": "Public IP address of the instance",
-      "Value": { "Fn::GetAtt": ["ChatServerInstance", "PublicIp"] }
+    "AutoScalingGroupName": {
+      "Description": "Name of the Auto Scaling Group",
+      "Value": { "Ref": "ChatServerAutoScalingGroup" }
     },
     "SecurityGroup": {
-      "Description": "Name of the security group",
+      "Description": "Security Group for Chat Server",
       "Value": { "Ref": "ChatServerSecurityGroup" }
     }
   }
